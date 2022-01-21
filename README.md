@@ -1,3 +1,8 @@
+### TODO
+ - [ ] Look at apigateway request mapping to raw json, doesn't seem right
+ - [ ] Split lambda function into multiple files based on intent
+ - [ ] Detect if stop timer is too long (someone forgot to stop), cancel that timer
+
 ### secrets
  - Add a `secrets.py` file in the config folder as outlined in `secrets_example.py`
 
