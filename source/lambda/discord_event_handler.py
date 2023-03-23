@@ -5,6 +5,7 @@ from nacl.signing import VerifyKey
 from nacl.exceptions import BadSignatureError
 from botocore.exceptions import ClientError
 import time
+import datetime
 
 PING_PONG = {"type": 1}
 RESPONSE_TYPES = {
@@ -20,13 +21,13 @@ RESPONSE_TYPES = {
 MY_DISCORD_ACTIONS = {
     "start-stop-timer": "",
     "list-timer": "",
+    "reset-timer": "",
+    "start-stop-minecraft": "",
 }
 
 
 def get_secret():
-    secret_name = (
-        ""
-    )
+    secret_name = ""
     region_name = ""
 
     # Create a Secrets Manager client
@@ -100,8 +101,14 @@ def lambda_handler(event, context):
 
     # check what event is coming from discord
     eventType = event["body-json"]["data"]["id"]
-    timedUserId = event["body-json"]["data"]["options"][0]["value"]
-    userName = event["body-json"]["data"]["resolved"]["users"][timedUserId]["username"]
+    try:
+        timedUserId = event["body-json"]["data"]["options"][0]["value"]
+        userName = event["body-json"]["data"]["resolved"]["users"][timedUserId][
+            "username"
+        ]
+    except:
+        timedUserId = "unknown"
+        userName = "unknown"
 
     if eventType == MY_DISCORD_ACTIONS["start-stop-timer"]:
         isItStartingATimer = event["body-json"]["data"]["options"][1]["value"]
@@ -162,18 +169,19 @@ def lambda_handler(event, context):
                     },
                 }
 
-            updatedTime = str(
-                (pointOfTime - int(existingStartTime))
-                + int(table_data["Item"]["timeInSeconds"]["N"])
+            updatedTime = (pointOfTime - int(existingStartTime)) + int(
+                table_data["Item"]["timeInSeconds"]["N"]
             )
             data = db.put_item(
                 TableName="discord_afk_timer",
                 Item={
                     "user_id": {"S": timedUserId},
-                    "timeInSeconds": {"N": updatedTime},
+                    "timeInSeconds": {"N": str(updatedTime)},
                     "start_timer": {"S": ""},
                 },
             )
+
+            updatedTime = str(datetime.timedelta(seconds=updatedTime))
             return {
                 "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
                 "data": {
@@ -188,24 +196,98 @@ def lambda_handler(event, context):
 
     if eventType == MY_DISCORD_ACTIONS["list-timer"]:
         db = boto3.client("dynamodb")
+        pointOfTime = int(time.time())
         table_data = db.get_item(
             TableName="discord_afk_timer", Key={"user_id": {"S": timedUserId}}
         )
-        wastedTime = "0"
+        wastedTime = 0
         if "Item" in table_data:
-            wastedTime = table_data["Item"]["timeInSeconds"]["N"]
+            if len(table_data["Item"]["start_timer"]["S"]) > 0:
+                wastedTime = (
+                    pointOfTime - int(table_data["Item"]["start_timer"]["S"])
+                ) + int(table_data["Item"]["timeInSeconds"]["N"])
+            else:
+                wastedTime = int(table_data["Item"]["timeInSeconds"]["N"])
+        wastedTime = datetime.timedelta(seconds=wastedTime)
 
         return {
             "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
             "data": {
                 "tts": False,
                 "content": "Total wasted time waiting for {discord_user}: {wasted_time} seconds".format(
-                    discord_user=userName, wasted_time=wastedTime
+                    discord_user=userName, wasted_time=str(wastedTime)
                 ),
                 "embeds": [],
                 "allowed_mentions": [],
             },
         }
+
+    if eventType == MY_DISCORD_ACTIONS["start-stop-minecraft"]:
+        isItStartingAServer = event["body-json"]["data"]["options"][0]["value"]
+        ec2 = boto3.client("ec2")
+
+        if isItStartingAServer == "true":
+            try:
+                ec2.start_instances(InstanceIds=["i-0bf88087a903650df"], DryRun=True)
+            except ClientError as e:
+                print(e)
+                if "DryRunOperation" not in str(e):
+                    return {
+                        "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
+                        "data": {
+                            "tts": False,
+                            "content": "Error occured trying to start minecraft server",
+                            "embeds": [],
+                            "allowed_mentions": [],
+                        },
+                    }
+            try:
+                response = ec2.start_instances(
+                    InstanceIds=["i-0bf88087a903650df"], DryRun=False
+                )
+                print(response)
+                return {
+                    "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
+                    "data": {
+                        "tts": False,
+                        "content": "Minecraft server started",
+                        "embeds": [],
+                        "allowed_mentions": [],
+                    },
+                }
+            except ClientError as e:
+                print(e)
+        else:
+            try:
+                ec2.stop_instances(InstanceIds=["i-0bf88087a903650df"], DryRun=True)
+            except ClientError as e:
+                print(e)
+                if "DryRunOperation" not in str(e):
+                    return {
+                        "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
+                        "data": {
+                            "tts": False,
+                            "content": "Error occured trying to stop minecraft server",
+                            "embeds": [],
+                            "allowed_mentions": [],
+                        },
+                    }
+            try:
+                response = ec2.stop_instances(
+                    InstanceIds=["i-0bf88087a903650df"], DryRun=False
+                )
+                print(response)
+                return {
+                    "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
+                    "data": {
+                        "tts": False,
+                        "content": "Minecraft server stopped",
+                        "embeds": [],
+                        "allowed_mentions": [],
+                    },
+                }
+            except ClientError as e:
+                print(e)
 
     return {
         "type": RESPONSE_TYPES["CHANNEL_MESSAGE_WITH_SOURCE"],
